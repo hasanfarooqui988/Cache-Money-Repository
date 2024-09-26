@@ -1,0 +1,189 @@
+import pandas as pd
+from geopy.distance import geodesic
+from itertools import combinations
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
+# Load the data
+file_path = '/content/all_waybill_info_meituan.csv'
+data = pd.read_csv(file_path)
+
+# Use only the first 5000 rows for testing
+data = data.head(5000)
+
+# Convert the platform_order_time and estimate_arrived_time columns to datetime
+data['platform_order_time'] = pd.to_datetime(data['platform_order_time'], unit='s')
+data['estimate_arrived_time'] = pd.to_datetime(data['estimate_arrived_time'], unit='s')
+data['arrive_time'] = pd.to_datetime(data['arrive_time'], unit='s')  # Assuming arrive_time exists
+
+# Ensure latitude and longitude are in float format for both sender and recipient
+data['sender_lat'] = pd.to_numeric(data['sender_lat'], errors='coerce') / 1e6
+data['sender_lng'] = pd.to_numeric(data['sender_lng'], errors='coerce') / 1e6
+data['recipient_lat'] = pd.to_numeric(data['recipient_lat'], errors='coerce') / 1e6
+data['recipient_lng'] = pd.to_numeric(data['recipient_lng'], errors='coerce') / 1e6
+
+# Remove prebooked orders and orders not grabbed by couriers
+data = data[(data['is_prebook'] == 0) & (data['is_courier_grabbed'] == 1)]
+
+# Filter out rows with negative delivery times
+data = data[data['arrive_time'] >= data['platform_order_time']]
+
+# Function to calculate the geodesic distance between two points
+def calculate_distance(coord1, coord2):
+    return geodesic(coord1, coord2).meters
+
+# Nearest neighbor heuristic function to find the optimal order of delivery
+def nearest_neighbor_tsp(orders, start_point):
+    unvisited = orders.copy()
+    route = [start_point]
+    current_point = start_point
+
+    while unvisited:
+        nearest = min(unvisited, key=lambda x: calculate_distance(current_point, (x['recipient_lat'], x['recipient_lng'])))
+        route.append((nearest['recipient_lat'], nearest['recipient_lng']))
+        current_point = (nearest['recipient_lat'], nearest['recipient_lng'])
+        unvisited.remove(nearest)
+
+    return route
+
+# Group orders based on a 5-minute interval of platform_order_time
+data['interval'] = data['platform_order_time'].dt.floor('5min')
+grouped_data = data.groupby('interval')
+
+# Parameters
+max_distance = 1000  # max distance between orders in meters for grouping
+time_window = pd.Timedelta(minutes=30)  # max allowed delivery time window
+max_orders_per_group = 5  # Cap on the maximum number of orders per group
+
+# Courier availability (simplified: all couriers available at the start of each interval)
+courier_availability = {i: True for i in range(1, 21)}  # Assuming 20 couriers
+
+# Result storage
+grouped_orders = []
+ungrouped_orders = []
+
+# Process each 5-minute interval group separately
+for interval, group in grouped_data:
+    available_couriers = [courier for courier, available in courier_availability.items() if available]
+    if not available_couriers:
+        continue  # Skip if no couriers are available
+
+    # Assign the first available courier for this interval
+    courier_id = available_couriers[0]
+    courier_availability[courier_id] = False  # Courier becomes unavailable
+
+    # Adjust max distance dynamically based on the group
+    density = len(group) / group['recipient_lat'].nunique()
+    adjusted_max_distance = max(500, 1500 / density)
+
+    # Check combinations within the 5-minute interval group
+    for combo_size in range(2, min(len(group), max_orders_per_group) + 1):
+        for combo in combinations(group.index, combo_size):
+            sub_group = group.loc[list(combo)]
+
+            # Check if all orders in the subgroup can be delivered within the promised time
+            start_point = (sub_group.iloc[0]['recipient_lat'], sub_group.iloc[0]['recipient_lng'])
+            route = nearest_neighbor_tsp(sub_group.to_dict('records'), start_point)
+
+            # Calculate total travel time and check if it meets the promise times
+            total_travel_time = 0
+            for i in range(1, len(route)):
+                dist = calculate_distance(route[i-1], route[i])
+                total_travel_time += dist / 300  # assuming average speed of 300 meters/minute
+
+            if sub_group['estimate_arrived_time'].max() - sub_group['platform_order_time'].min() >= pd.Timedelta(minutes=total_travel_time):
+                grouped_orders.append(sub_group)
+            else:
+                ungrouped_orders.append(sub_group)
+
+    # Handle ungrouped orders immediately
+    grouped_order_ids = [order_id for g in grouped_orders for order_id in g['order_id'].unique()]
+    for _, order in group.iterrows():
+        if order['order_id'] not in grouped_order_ids:
+            ungrouped_orders.append(order)
+
+    # Courier becomes available after 30 minutes
+    courier_availability[courier_id] = True
+
+
+
+# Calculate metrics
+# 1. Average Delivery Time
+data['delivery_time'] = data['arrive_time'] - data['platform_order_time']
+average_delivery_time = data['delivery_time'].mean()
+
+# 2. Courier Utilization
+# Convert delivery_time to total seconds first, then sum
+total_courier_working_time = 8 * 60 * 20  # 8 hours per day, 20 couriers
+total_delivery_time_seconds = data['delivery_time'].dt.total_seconds().sum()
+courier_utilization = (total_delivery_time_seconds / 60) / total_courier_working_time
+
+# 3. Average Courier Idle Time
+# Assuming idle_time is calculated separately, here we use a placeholder
+data['idle_time'] = pd.Timedelta(minutes=10)  # Placeholder, adjust based on real data
+average_courier_idle_time = data['idle_time'].mean()
+
+# 4. Customer Satisfaction Rate
+on_time_deliveries = data[data['arrive_time'] <= data['estimate_arrived_time']]
+customer_satisfaction_rate = (len(on_time_deliveries) / len(data)) * 100
+
+# 5. Average Distance Traveled
+def calculate_delivery_distance(row):
+    start = (row['sender_lat'], row['sender_lng'])
+    end = (row['recipient_lat'], row['recipient_lng'])
+    return geodesic(start, end).meters
+
+# Re-run the distance calculation
+data['distance_traveled'] = data.apply(calculate_delivery_distance, axis=1)
+average_distance_traveled = data['distance_traveled'].mean()
+
+# 6. Grouping Rate
+# Flatten the list of grouped orders to get a list of all orders that were grouped
+grouped_order_ids = [order_id for group in grouped_orders for order_id in group['order_id'].unique()]
+
+# Calculate the number of unique grouped orders
+unique_grouped_orders = len(set(grouped_order_ids))
+
+# Calculate the total number of orders
+total_orders = len(data)
+
+# Calculate the grouping rate as the percentage of unique grouped orders out of the total number of orders
+grouping_rate = (unique_grouped_orders / total_orders) * 100
+
+# Print all metrics
+print("Average Delivery Time:", average_delivery_time)
+print("Courier Utilization:", courier_utilization)
+print("Average Courier Idle Time:", average_courier_idle_time)
+print("Customer Satisfaction Rate:", customer_satisfaction_rate, "%")
+print("Average Distance Traveled:", average_distance_traveled)
+print("Grouping Rate:", grouping_rate, "%")
+
+# Visualization
+plt.figure(figsize=(10, 7))
+
+# Use plt.get_cmap to get a colormap for grouped orders
+cmap = plt.get_cmap('tab20')
+
+# Plotting ungrouped orders first with red color and no lines
+ungrouped_handle = plt.plot([], [], 'ro', markersize=5, alpha=0.7, label='Ungrouped Order')
+for order in ungrouped_orders:
+    plt.plot(order['recipient_lng'], order['recipient_lat'], 'ro', markersize=5, alpha=0.7)
+
+# Plotting each 5-minute interval group with a different color for grouped orders with lines
+grouped_handles = []
+for i, (interval, group) in enumerate(grouped_data):
+    for sub_group in grouped_orders:
+        # Ensure the sub_group belongs to the current interval
+        if sub_group['interval'].iloc[0] == interval:
+            color = cmap(i % 20)
+            handle = plt.plot(sub_group['recipient_lng'], sub_group['recipient_lat'], 'o-', color=color, markersize=5, alpha=0.7)
+            grouped_handles.append(handle)
+
+# Manually create the legend to ensure distinct entries
+plt.legend([ungrouped_handle[0], grouped_handles[0][0]], ['Ungrouped Order', 'Grouped Order (Clusters)'], loc='upper left')
+
+plt.xlabel('Longitude')
+plt.ylabel('Latitude')
+plt.title('Grouped vs Ungrouped Orders with Clusters')
+plt.grid(True)
+plt.show()
