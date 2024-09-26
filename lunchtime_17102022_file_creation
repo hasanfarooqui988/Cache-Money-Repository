@@ -1,0 +1,31 @@
+import pandas as pd
+
+# Load the data
+file_path = '/content/all_waybill_info_meituan.csv'
+data = pd.read_csv(file_path)
+
+# Convert the platform_order_time to datetime
+data['platform_order_time'] = pd.to_datetime(data['platform_order_time'], unit='s')
+
+# Define the lunch time range
+lunch_start = pd.Timestamp('2022-10-17 12:00:00')
+lunch_end = pd.Timestamp('2022-10-17 13:00:00')
+
+# Filter data for only October 17th, 2022, during lunch time
+filtered_data = data[(data['platform_order_time'] >= lunch_start) & (data['platform_order_time'] <= lunch_end)].copy()
+
+# Print the number of entries
+num_entries = len(filtered_data)
+print(f"Number of entries in the filtered lunch time data: {num_entries}")
+
+# Convert the times back to UNIX format
+filtered_data.loc[:, 'platform_order_time'] = filtered_data['platform_order_time'].astype('int64') // 10**9
+filtered_data.loc[:, 'estimate_arrived_time'] = pd.to_datetime(filtered_data['estimate_arrived_time'], unit='s').astype('int64') // 10**9
+filtered_data.loc[:, 'arrive_time'] = pd.to_datetime(filtered_data['arrive_time'], unit='s').astype('int64') // 10**9
+
+# Save the filtered data
+filtered_data.to_csv('/content/filtered_lunch_time_data.csv', index=False)
+
+# Print the final number of entries after sampling
+final_num_entries = len(filtered_data)
+print(f"Number of entries after sampling: {final_num_entries}")
