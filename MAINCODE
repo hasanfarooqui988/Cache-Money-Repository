@@ -3,15 +3,18 @@ from geopy.distance import geodesic
 from itertools import combinations
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 
 # Load the data
 file_path = '/content/all_waybill_info_meituan.csv'
 data = pd.read_csv(file_path)
 
+
 # Convert the platform_order_time and estimate_arrived_time columns to datetime
 data['platform_order_time'] = pd.to_datetime(data['platform_order_time'], unit='s')
 data['estimate_arrived_time'] = pd.to_datetime(data['estimate_arrived_time'], unit='s')
-data['arrive_time'] = pd.to_datetime(data['arrive_time'], unit='s')  # Assuming arrive_time exists
+data['arrive_time'] = pd.to_datetime(data['arrive_time'], unit='s')
 
 # Ensure latitude and longitude are in float format for both sender and recipient
 data['sender_lat'] = pd.to_numeric(data['sender_lat'], errors='coerce') / 1e6
@@ -26,6 +29,7 @@ data = data[(data['is_prebook'] == 0) & (data['is_courier_grabbed'] == 1)]
 data = data[data['arrive_time'] >= data['platform_order_time']]
 
 # Function to calculate the geodesic distance between two points
+@lru_cache(maxsize=None)
 def calculate_distance(coord1, coord2):
     return geodesic(coord1, coord2).meters
 
@@ -50,6 +54,7 @@ grouped_data = data.groupby('interval')
 # Parameters
 max_distance = 1000  # max distance between orders in meters for grouping
 time_window = pd.Timedelta(minutes=30)  # max allowed delivery time window
+max_group_size = 3  # Limit max group size to reduce combinations
 
 # Courier availability (simplified: all couriers available at the start of each interval)
 courier_availability = {i: True for i in range(1, 21)}  # Assuming 20 couriers
@@ -58,7 +63,6 @@ courier_availability = {i: True for i in range(1, 21)}  # Assuming 20 couriers
 grouped_orders = []
 ungrouped_orders = []
 group_id_counter = 1  # Initialize a counter for group IDs
-grouped_order_ids = set()  # Track orders that have been grouped
 
 # Process each 2-minute interval group separately
 for interval, group in grouped_data:
@@ -71,13 +75,9 @@ for interval, group in grouped_data:
     courier_availability[courier_id] = False  # Courier becomes unavailable
 
     # Check combinations within the 2-minute interval group
-    for combo_size in range(2, len(group) + 1):
+    for combo_size in range(2, min(len(group) + 1, max_group_size + 1)):
         for combo in combinations(group.index, combo_size):
             sub_group = group.loc[list(combo)]
-
-            # Check if any order in the sub_group has already been grouped
-            if any(order_id in grouped_order_ids for order_id in sub_group['order_id']):
-                continue  # Skip this sub_group if any order is already grouped
 
             # Check if all orders in the subgroup can be delivered within the promised time
             start_point = (sub_group.iloc[0]['recipient_lat'], sub_group.iloc[0]['recipient_lng'])
@@ -92,10 +92,12 @@ for interval, group in grouped_data:
             if sub_group['estimate_arrived_time'].max() - sub_group['platform_order_time'].min() >= pd.Timedelta(minutes=total_travel_time):
                 sub_group['group_id'] = group_id_counter  # Assign a group ID
                 grouped_orders.append(sub_group)
-                grouped_order_ids.update(sub_group['order_id'])  # Track grouped orders
                 group_id_counter += 1
+            else:
+                ungrouped_orders.append(sub_group)
 
     # Handle ungrouped orders immediately
+    grouped_order_ids = [order_id for g in grouped_orders for order_id in g['order_id'].unique()]
     for _, order in group.iterrows():
         if order['order_id'] not in grouped_order_ids:
             order['group_id'] = None  # Mark as ungrouped
@@ -103,7 +105,6 @@ for interval, group in grouped_data:
 
     # Courier becomes available after 30 minutes
     courier_availability[courier_id] = True
-
 
 # Calculate metrics
 # 1. Average Delivery Time
@@ -164,28 +165,35 @@ cmap = plt.get_cmap('tab20')
 
 # Plotting ungrouped orders first with red color and no lines
 ungrouped_handle = plt.plot([], [], 'ro', markersize=5, alpha=0.7, label='Ungrouped Order')
-for order in ungrouped_orders_df.itertuples():
-    plt.plot(order.recipient_lng, order.recipient_lat, 'ro', markersize=5, alpha=0.7)
+for order in ungrouped_orders:
+    plt.plot(order['recipient_lng'], order['recipient_lat'], 'ro', markersize=5, alpha=0.7)
 
 # Plotting each 2-minute interval group with a different color for grouped orders with lines
-for i, sub_group in enumerate(grouped_orders):
-    color = cmap(i % 20)
-    plt.plot(sub_group['recipient_lng'], sub_group['recipient_lat'], 'o-', color=color, markersize=5, alpha=0.7)
+grouped_handles = []
+for i, (interval, group) in enumerate(grouped_data):
+    for sub_group in grouped_orders:
+        # Ensure the sub_group belongs to the current interval
+        if sub_group['interval'].iloc[0] == interval:
+            color = cmap(i % 20)
+            handle = plt.plot(sub_group['recipient_lng'], sub_group['recipient_lat'], 'o-', color=color, markersize=5, alpha=0.7)
+            grouped_handles.append(handle)
 
 # Manually create the legend to ensure distinct entries
-plt.legend([ungrouped_handle[0]], ['Ungrouped Order'], loc='upper left')
-if grouped_handles:
-    plt.legend([ungrouped_handle[0], grouped_handles[0][0]], ['Ungrouped Order', 'Grouped Order'], loc='upper left')
+plt.legend([ungrouped_handle[0], grouped_handles[0][0]], ['Ungrouped Order', 'Grouped Orders'], loc='upper left')
 
 plt.xlabel('Longitude')
 plt.ylabel('Latitude')
-plt.title('Grouped vs Ungrouped Orders with Clusters')
+plt.title('Grouped vs Ungrouped Orders (Delivery locations)')
 plt.grid(True)
 plt.show()
 
-# Save grouped orders to CSV for reference
-grouped_orders_df = pd.concat(grouped_orders)
-grouped_orders_df.to_csv('/content/grouped_orders_with_ids.csv', index=False)
+# Flatten the ungrouped orders list to ensure it can be converted to a DataFrame
+flattened_ungrouped_orders = pd.concat(ungrouped_orders, ignore_index=True)
 
 # Save ungrouped orders to CSV for reference
-ungrouped_orders_df.to_csv('/content/ungrouped_orders.csv', index=False)
+flattened_ungrouped_orders.to_csv('/content/ungrouped_orders.csv', index=False)
+
+# Save grouped orders to CSV for reference
+grouped_orders_df = pd.concat(grouped_orders, ignore_index=True)
+grouped_orders_df.to_csv('/content/grouped_orders_with_ids.csv', index=False)
+
