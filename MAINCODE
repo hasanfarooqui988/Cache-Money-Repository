@@ -65,7 +65,7 @@ max_distance = 1000  # max distance between orders in meters for grouping
 time_window = pd.Timedelta(minutes=45)  # max allowed delivery time window
 
 # Courier availability using heapq (priority queue) to manage the available time of couriers
-courier_queue = [(0, i) for i in range(1, 51)]  # Initialize with 30 couriers available at time 0
+courier_queue = [(0, i) for i in range(1, 51)]  # Initialize with 50 couriers available at time 0
 
 # Result storage
 grouped_orders = []
