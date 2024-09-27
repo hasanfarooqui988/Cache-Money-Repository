@@ -1,31 +1,35 @@
 import pandas as pd
 
 # Load the data
-file_path = '/content/all_waybill_info_meituan.csv'
+file_path = '/content/all_waybill_info_meituan.csv'  # Adjust the path to your file
 data = pd.read_csv(file_path)
 
-# Convert the platform_order_time to datetime
-data['platform_order_time'] = pd.to_datetime(data['platform_order_time'], unit='s')
+# Define Unix time range for lunchtime on October 17, 2022 (12:00 PM to 1:00 PM UTC)
+lunchtime_start_unix = 1665998400  # 2022-10-17 12:00:00 UTC
+lunchtime_end_unix = 1666002000    # 2022-10-17 13:00:00 UTC
 
-# Define the lunch time range
-lunch_start = pd.Timestamp('2022-10-17 12:00:00')
-lunch_end = pd.Timestamp('2022-10-17 13:00:00')
+# Filter the data for orders within the lunchtime period
+lunchtime_data = data[(data['platform_order_time'] >= lunchtime_start_unix) & 
+                      (data['platform_order_time'] <= lunchtime_end_unix)]
 
-# Filter data for only October 17th, 2022, during lunch time
-filtered_data = data[(data['platform_order_time'] >= lunch_start) & (data['platform_order_time'] <= lunch_end)].copy()
+# Further filtering (e.g., remove prebooked orders and orders not grabbed by couriers)
+lunchtime_data = lunchtime_data[(lunchtime_data['is_prebook'] == 0) & 
+                                (lunchtime_data['is_courier_grabbed'] == 1)]
 
-# Print the number of entries
-num_entries = len(filtered_data)
-print(f"Number of entries in the filtered lunch time data: {num_entries}")
+# Check the number of entries in the filtered data
+print(f"Number of entries after filtering: {len(lunchtime_data)}")
 
-# Convert the times back to UNIX format
-filtered_data.loc[:, 'platform_order_time'] = filtered_data['platform_order_time'].astype('int64') // 10**9
-filtered_data.loc[:, 'estimate_arrived_time'] = pd.to_datetime(filtered_data['estimate_arrived_time'], unit='s').astype('int64') // 10**9
-filtered_data.loc[:, 'arrive_time'] = pd.to_datetime(filtered_data['arrive_time'], unit='s').astype('int64') // 10**9
+# Randomly sample 200 rows from the filtered data
+sampled_data = lunchtime_data.sample(n=200, random_state=42)
 
-# Save the filtered data
-filtered_data.to_csv('/content/filtered_lunch_time_data.csv', index=False)
+# Check the number of entries in the sampled data
+print(f"Number of entries after sampling: {len(sampled_data)}")
 
-# Print the final number of entries after sampling
-final_num_entries = len(filtered_data)
-print(f"Number of entries after sampling: {final_num_entries}")
+# Save the sampled data to a new CSV file
+output_file_path = '/content/lunchtime_orders_17_oct_sampled.csv'  # Adjust the path as needed
+sampled_data.to_csv(output_file_path, index=False)
+
+print(f"Sampled data saved to: {output_file_path}")
+
+
+
