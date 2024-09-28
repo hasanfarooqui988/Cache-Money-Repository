@@ -1,0 +1,37 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load the full dataset
+file_path = '/content/all_waybill_info_meituan.csv'
+data = pd.read_csv(file_path)
+
+# Convert the platform_order_time to datetime and filter relevant data
+data['platform_order_time'] = pd.to_datetime(data['platform_order_time'], unit='s')
+data = data[(data['is_prebook'] == 0) & (data['is_courier_grabbed'] == 1)]
+
+# Ensure latitude and longitude are in float format
+data['recipient_lat'] = pd.to_numeric(data['recipient_lat'], errors='coerce') / 1e6
+data['recipient_lng'] = pd.to_numeric(data['recipient_lng'], errors='coerce') / 1e6
+
+# Filter for the cluster in the top right corner
+filtered_data = data[(data['recipient_lat'] >= 46.00) & (data['recipient_lat'] <= 46.15) &
+                     (data['recipient_lng'] >= 174.8) & (data['recipient_lng'] <= 175.1)]
+
+# Reconvert platform_order_time to Unix timestamp
+filtered_data['platform_order_time'] = filtered_data['platform_order_time'].astype('int64') // 10**9
+
+# Reconvert recipient_lat and recipient_lng back to microdegrees
+filtered_data['recipient_lat'] = (filtered_data['recipient_lat'] * 1e6).astype(int)
+filtered_data['recipient_lng'] = (filtered_data['recipient_lng'] * 1e6).astype(int)
+
+# Save the filtered data to a new CSV file
+filtered_data.to_csv('/content/filtered_cluster_data.csv', index=False)
+
+# Plot the filtered orders
+plt.figure(figsize=(10, 7))
+plt.hist2d(filtered_data['recipient_lng'] / 1e6, filtered_data['recipient_lat'] / 1e6, bins=(100, 100), cmap='viridis')
+plt.colorbar(label='Order Density')
+plt.title('Order Density (Filtered Cluster)')
+plt.xlabel('Longitude')
+plt.ylabel('Latitude')
+plt.show()
