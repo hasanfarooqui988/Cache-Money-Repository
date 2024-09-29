@@ -9,21 +9,16 @@ lunchtime_start_unix = 1665998400  # 2022-10-17 12:00:00 UTC
 lunchtime_end_unix = 1666002000    # 2022-10-17 13:00:00 UTC
 
 # Filter the data for orders within the lunchtime period
-lunchtime_data = data[(data['platform_order_time'] >= lunchtime_start_unix) & 
+lunchtime_data = data[(data['platform_order_time'] >= lunchtime_start_unix) &
                       (data['platform_order_time'] <= lunchtime_end_unix)]
 
 # Further filtering (e.g., remove prebooked orders and orders not grabbed by couriers)
-lunchtime_data = lunchtime_data[(lunchtime_data['is_prebook'] == 0) & 
+lunchtime_data = lunchtime_data[(lunchtime_data['is_prebook'] == 0) &
                                 (lunchtime_data['is_courier_grabbed'] == 1)]
 
 # Check the number of entries in the filtered data
 print(f"Number of entries after filtering: {len(lunchtime_data)}")
 
-# Randomly sample 200 rows from the filtered data
-sampled_data = lunchtime_data.sample(n=200, random_state=42)
-
-# Check the number of entries in the sampled data
-print(f"Number of entries after sampling: {len(sampled_data)}")
 
 # Save the sampled data to a new CSV file
 output_file_path = '/content/lunchtime_orders_17_oct_sampled.csv'  # Adjust the path as needed
