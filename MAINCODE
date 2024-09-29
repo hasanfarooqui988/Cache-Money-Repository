@@ -41,7 +41,7 @@ def nearest_neighbor_tsp(orders, start_point):
 
     while unvisited:
         # Find the nearest recipient location or pickup location
-        nearest = min(unvisited, key=lambda x: calculate_distance(current_point, 
+        nearest = min(unvisited, key=lambda x: calculate_distance(current_point,
                         (x['recipient_lat'], x['recipient_lng'])))
         # Check if pickup location is closer than recipient location
         if calculate_distance(current_point, (nearest['sender_lat'], nearest['sender_lng'])) < \
