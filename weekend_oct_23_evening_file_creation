@@ -1,0 +1,18 @@
+import pandas as pd
+
+# Load the full dataset
+file_path = '/content/all_waybill_info_meituan.csv'
+data = pd.read_csv(file_path)
+
+# Unix timestamps for October 23rd, 2022, from 6:00 PM to 10:00 PM
+start_time_unix_oct_23 = 1666516800  # Unix timestamp for 2022-10-23 18:00:00
+end_time_unix_oct_23 = 1666531200    # Unix timestamp for 2022-10-23 22:00:00
+
+# Filter for the specific time range using Unix time
+oct_23_evening_subset = data[(data['platform_order_time'] >= start_time_unix_oct_23) & (data['platform_order_time'] <= end_time_unix_oct_23)]
+
+# Save the evening subset to a new CSV file
+oct_23_evening_subset.to_csv('/content/oct_23_evening_subset_unix.csv', index=False)
+
+# Print the number of entries in the evening subset
+print(f"Number of orders in the Evening Subset (October 23rd, 6:00 PM to 10:00 PM): {len(oct_23_evening_subset)}")
